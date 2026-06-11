@@ -1,6 +1,6 @@
 # 👁 Sauron
 
-Panneau **CEP pour Adobe Premiere Pro** : tout fichier déposé dans le dossier `ELEMENTS/` du projet
+Panneau **CEP pour Adobe Premiere Pro** : tout fichier déposé dans les sous-dossiers du dossier du projet
 est **importé automatiquement** dans un chutier miroir. Alternative maison et gratuite à Watchtower.
 
 ## Comment ça marche
