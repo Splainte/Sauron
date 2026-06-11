@@ -116,6 +116,7 @@ var state = {
   registry: {},      // { "ELEMENTS/musique/track.mp3": true } — clés relatives à la racine
   configFile: "",
   config: { excluded: [] }, // dossiers de 1er niveau à ignorer (choix utilisateur)
+  knownByName: {},   // nom de fichier → chemins (normalisés) que Premiere connaît déjà
   queue: Promise.resolve() // sérialise les appels evalScript
 };
 
@@ -171,11 +172,39 @@ function relKey(absPath) {
   return path.relative(state.watchRoot, absPath).split(path.sep).join("/");
 }
 
+// NTFS et APFS sont insensibles à la casse mais pas indexOf/les clés d'objet :
+// toutes les clés de registre sont en minuscules pour qu'un même fichier vu
+// sous deux casses (ou via UNC vs lettre mappée) ne soit jamais réimporté.
+function normKey(absPath) {
+  return relKey(absPath).toLowerCase();
+}
+
+function normalizePath(p) {
+  return String(p).split("\\").join("/").toLowerCase();
+}
+
+// Premiere peut connaître le même fichier sous un autre chemin absolu que le
+// nôtre (importé via \\nas\... alors que le projet est ouvert via Z:\, ancienne
+// casse…) : on compare la FIN du chemin (la partie relative à la racine) au
+// lieu du préfixe.
+function knownElsewhere(key) {
+  var list = state.knownByName[key.split("/").pop()];
+  if (!list) { return false; }
+  for (var i = 0; i < list.length; i++) {
+    if (list[i].slice(-(key.length + 1)) === "/" + key) { return true; }
+  }
+  return false;
+}
+
 function loadRegistry() {
   state.registry = {};
   try {
     if (fs.existsSync(state.registryFile)) {
-      state.registry = JSON.parse(fs.readFileSync(state.registryFile, "utf8"));
+      var raw = JSON.parse(fs.readFileSync(state.registryFile, "utf8"));
+      // Migration des registres écrits avant le passage aux clés minuscules.
+      Object.keys(raw).forEach(function (k) {
+        state.registry[k.toLowerCase()] = true;
+      });
     }
   } catch (e) {
     log("Registre illisible, repart de zéro (" + e.message + ")", "warn");
@@ -329,10 +358,18 @@ function onUnlinkDir(dirPath) {
 }
 
 function onAddFile(filePath) {
-  var key = relKey(filePath);
+  var key = normKey(filePath);
+  var rel = relKey(filePath); // pour l'affichage (casse d'origine)
   if (path.basename(filePath).charAt(0) === ".") { return; } // fichiers cachés
   if (isExcluded(filePath)) { return; }
   if (state.registry[key]) { return; }
+  if (knownElsewhere(key)) {
+    // Premiere connaît déjà ce fichier sous un autre chemin absolu : on le
+    // note dans le registre et on n'importe surtout pas de doublon.
+    state.registry[key] = true;
+    saveRegistry();
+    return;
+  }
   var segs = binSegments(filePath);
   enqueue(function () {
     return evalScript(
@@ -342,9 +379,9 @@ function onAddFile(filePath) {
       if (res === "OK") {
         state.registry[key] = true;
         saveRegistry();
-        log("Importé : " + key);
+        log("Importé : " + rel);
       } else {
-        log("Échec import " + key + " → " + res, "err");
+        log("Échec import " + rel + " → " + res, "err");
       }
     });
   });
@@ -398,11 +435,22 @@ function startWatcher() {
     // Au premier lancement sur un projet, on considère comme déjà importé
     // tout ce que le projet connaît (évite de dédoublonner un projet existant).
     evalScript("SAURON.listImportedPaths()").then(function (known) {
+      if (known === "EvalScript error.") {
+        setStatus("Erreur ExtendScript", "err");
+        log("Impossible de lister les médias du projet : on ne démarre PAS " +
+            "la surveillance (risque de tout réimporter en doublon).", "err");
+        return;
+      }
       var changed = false;
+      var rootPrefix = normalizePath(watchRoot) + "/";
+      state.knownByName = {};
       known.split("\n").forEach(function (p) {
         if (!p) { return; }
-        if (p.indexOf(watchRoot) === 0) {
-          var key = relKey(p);
+        var norm = normalizePath(p);
+        var base = norm.split("/").pop();
+        (state.knownByName[base] = state.knownByName[base] || []).push(norm);
+        if (norm.indexOf(rootPrefix) === 0) {
+          var key = norm.slice(rootPrefix.length);
           if (!state.registry[key]) {
             state.registry[key] = true;
             changed = true;
