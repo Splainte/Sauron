@@ -9,13 +9,45 @@
  * relatifs — il voyage donc avec le dossier projet.
  */
 
-/* global CSInterface */
+/* global CSInterface, cep_node */
 
-var fs = require("fs");
-var path = require("path");
-var chokidar = require("chokidar");
+// Toute erreur non rattrapée s'affiche dans le panneau au lieu de bloquer
+// silencieusement sur "Démarrage…".
+window.onerror = function (msg, src, line) {
+  var st = document.getElementById("status");
+  st.textContent = "Erreur (voir log)";
+  st.className = "status err";
+  var lg = document.getElementById("log");
+  var div = document.createElement("div");
+  div.className = "err";
+  div.textContent = msg + " (" + (src || "?").split("/").pop() + ":" + line + ")";
+  lg.appendChild(div);
+};
+
+// Selon la version de CEP, le require Node est injecté dans la page
+// (--enable-nodejs --mixed-context) ou seulement exposé via cep_node.
+var nodeRequire =
+  (typeof require !== "undefined") ? require :
+  (typeof cep_node !== "undefined") ? cep_node.require : null;
+if (!nodeRequire) {
+  throw new Error("Node.js indisponible dans ce panneau CEP (require/cep_node absents)");
+}
+
+var fs = nodeRequire("fs");
+var path = nodeRequire("path");
 
 var cs = new CSInterface();
+
+// Le require de CEP ne résout pas node_modules relativement au HTML de façon
+// fiable → chargement par chemin absolu depuis la racine de l'extension.
+var extDir = cs.getSystemPath(SystemPath.EXTENSION);
+var chokidar;
+try {
+  chokidar = nodeRequire(path.join(extDir, "node_modules", "chokidar"));
+} catch (e) {
+  throw new Error("chokidar introuvable dans " + extDir +
+    "/node_modules — lancer `npm install` avant d'installer le panneau (" + e.message + ")");
+}
 
 var state = {
   watcher: null,
@@ -249,6 +281,11 @@ function stopWatcher() {
 
 function startWatcher() {
   evalScript("SAURON.getProjectPath()").then(function (projPath) {
+    if (projPath === "EvalScript error.") {
+      setStatus("Erreur ExtendScript", "err");
+      log("jsx/sauron.jsx n'a pas chargé côté Premiere (EvalScript error).", "err");
+      return;
+    }
     if (!projPath) {
       setStatus("Aucun projet ouvert", "err");
       log("Ouvre un projet .prproj puis relance.", "warn");
