@@ -8,7 +8,7 @@ for %%V in (9 10 11 12) do (
 )
 
 set DEST=%APPDATA%\Adobe\CEP\extensions\com.splainte.sauron
-robocopy "%~dp0.." "%DEST%" /MIR /XD .git install /XF .gitignore >nul
+robocopy "%~dp0.." "%DEST%" /MIR /XD .git .github install installer /XF .gitignore >nul
 
 echo.
 echo Sauron installe dans %DEST%

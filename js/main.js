@@ -36,6 +36,10 @@ if (!nodeRequire) {
 
 var fs = nodeRequire("fs");
 var path = nodeRequire("path");
+var os = nodeRequire("os");
+var https = nodeRequire("https");
+var urlMod = nodeRequire("url");
+var spawn = nodeRequire("child_process").spawn;
 
 var cs = new CSInterface();
 
@@ -127,7 +131,9 @@ var ui = {
   target: document.getElementById("target"),
   log: document.getElementById("log"),
   toggle: document.getElementById("toggle"),
-  folders: document.getElementById("folders")
+  folders: document.getElementById("folders"),
+  version: document.getElementById("version"),
+  update: document.getElementById("update")
 };
 
 function setStatus(text, cls) {
@@ -394,6 +400,127 @@ function onAddFile(filePath) {
   });
 }
 
+// ---------- Mise à jour automatique ----------
+// La dernière release GitHub fait foi : si son tag est plus récent que la
+// version du manifest local, on télécharge Sauron-Setup.exe et on le lance
+// (Windows). Sur macOS, pas d'installeur : on ouvre la page de la release.
+
+var UPDATE_REPO = "Splainte/Sauron";
+var IS_WINDOWS = navigator.platform.indexOf("Win") === 0;
+
+function currentVersion() {
+  try {
+    var m = fs.readFileSync(path.join(extDir, "CSXS", "manifest.xml"), "utf8")
+      .match(/ExtensionBundleVersion="([^"]+)"/);
+    return m ? m[1] : "0.0.0";
+  } catch (e) {
+    return "0.0.0";
+  }
+}
+
+// true si a > b ("1.2.0" vs "1.1.9")
+function isNewer(a, b) {
+  var pa = String(a).replace(/^v/, "").split(".");
+  var pb = String(b).replace(/^v/, "").split(".");
+  for (var i = 0; i < Math.max(pa.length, pb.length); i++) {
+    var na = parseInt(pa[i], 10) || 0;
+    var nb = parseInt(pb[i], 10) || 0;
+    if (na !== nb) { return na > nb; }
+  }
+  return false;
+}
+
+// GET https en suivant les redirections (GitHub sert les binaires via 302).
+// url.parse plutôt que https.get(url, options) : le Node embarqué par CEP
+// est ancien et ne connaît pas cette signature.
+function httpsGet(url, redirectsLeft) {
+  return new Promise(function (resolve, reject) {
+    var opts = urlMod.parse(url);
+    opts.headers = { "User-Agent": "Sauron-panel" };
+    https.get(opts, function (res) {
+      if (res.statusCode >= 300 && res.statusCode < 400 &&
+          res.headers.location && redirectsLeft > 0) {
+        res.resume();
+        resolve(httpsGet(res.headers.location, redirectsLeft - 1));
+        return;
+      }
+      if (res.statusCode !== 200) {
+        res.resume();
+        reject(new Error("HTTP " + res.statusCode));
+        return;
+      }
+      resolve(res);
+    }).on("error", reject);
+  });
+}
+
+function httpsGetText(url) {
+  return httpsGet(url, 5).then(function (res) {
+    return new Promise(function (resolve, reject) {
+      var data = "";
+      res.setEncoding("utf8");
+      res.on("data", function (c) { data += c; });
+      res.on("end", function () { resolve(data); });
+      res.on("error", reject);
+    });
+  });
+}
+
+function httpsDownload(url, dest) {
+  return httpsGet(url, 5).then(function (res) {
+    return new Promise(function (resolve, reject) {
+      var out = fs.createWriteStream(dest);
+      res.pipe(out);
+      out.on("finish", function () { resolve(dest); });
+      out.on("error", reject);
+      res.on("error", reject);
+    });
+  });
+}
+
+var updating = false;
+
+function checkUpdate() {
+  if (updating) { return; }
+  updating = true;
+  ui.update.disabled = true;
+  log("Recherche de mise à jour…");
+  httpsGetText("https://api.github.com/repos/" + UPDATE_REPO + "/releases/latest")
+    .then(function (body) {
+      var rel = JSON.parse(body);
+      var latest = String(rel.tag_name || "").replace(/^v/, "");
+      if (!latest) { throw new Error("release sans numéro de version"); }
+      if (!isNewer(latest, currentVersion())) {
+        log("Sauron est à jour (v" + currentVersion() + ").");
+        return;
+      }
+      log("Nouvelle version disponible : v" + latest);
+      if (!IS_WINDOWS) {
+        spawn("open", [rel.html_url], { detached: true, stdio: "ignore" }).unref();
+        log("Page de téléchargement ouverte dans le navigateur.");
+        return;
+      }
+      var asset = null;
+      (rel.assets || []).forEach(function (a) {
+        if (/setup.*\.exe$/i.test(a.name)) { asset = a; }
+      });
+      if (!asset) { throw new Error("pas d'installeur Windows dans la release"); }
+      log("Téléchargement de " + asset.name + "…");
+      var dest = path.join(os.tmpdir(), "Sauron-Setup-v" + latest + ".exe");
+      return httpsDownload(asset.browser_download_url, dest).then(function () {
+        spawn(dest, [], { detached: true, stdio: "ignore" }).unref();
+        log("Installeur v" + latest + " lancé : suis l'assistant, puis redémarre Premiere.", "warn");
+      });
+    })
+    .catch(function (e) {
+      log("Mise à jour impossible : " + e.message, "err");
+    })
+    .then(function () {
+      updating = false;
+      ui.update.disabled = false;
+    });
+}
+
 // ---------- Démarrage / arrêt ----------
 
 function stopWatcher() {
@@ -520,6 +647,9 @@ setInterval(function () {
 ui.toggle.addEventListener("click", function () {
   if (state.watcher) { stopWatcher(); } else { startWatcher(); }
 });
+
+ui.update.addEventListener("click", checkUpdate);
+ui.version.textContent = "v" + currentVersion();
 
 // Désactivé par défaut : la surveillance ne démarre que sur clic « Démarrer ».
 setStatus("En pause", "paused");

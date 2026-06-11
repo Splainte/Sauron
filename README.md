@@ -40,7 +40,19 @@ localiser le dossier `PROJETS` au démarrage.
   `.sauron-config.json` à côté du `.prproj` (relatif → portable). Recocher un dossier rattrape
   les fichiers arrivés pendant l'exclusion.
 
-## Installation (dev, non signé)
+## Installation
+
+**Windows (recommandé)** : télécharger `Sauron-Setup.exe` depuis la
+[dernière release](https://github.com/Splainte/Sauron/releases/latest), double-clic,
+suivre l'assistant. Pas de droits admin nécessaires. Redémarrer Premiere →
+**Fenêtre > Extensions > Sauron**.
+
+**Mises à jour** : bouton « Vérifier les mises à jour » en bas du panneau — il télécharge
+et lance l'installeur de la dernière version publiée.
+
+Compatibilité : Premiere Pro 2020 (14.0) et + (tant qu'Adobe maintient CEP).
+
+### Installation dev (depuis le repo)
 
 ```bash
 git clone https://github.com/Splainte/Sauron.git && cd Sauron
@@ -52,10 +64,15 @@ Node/npm sur la machine de montage**, un `git pull` suffit pour se mettre à jou
 - **Windows** : double-clic sur `install/install-windows.bat`
 - **macOS** : `bash install/install-macos.sh`
 
-Les scripts activent `PlayerDebugMode` (CSXS 9→12) et installent le panneau dans le dossier
-extensions CEP utilisateur. Redémarrer Premiere → **Fenêtre > Extensions > Sauron**.
+Les scripts font la même chose que l'installeur : `PlayerDebugMode` (CSXS 9→12) + copie du
+panneau dans le dossier extensions CEP utilisateur.
 
-Compatibilité : Premiere Pro 2020 (14.0) et + (tant qu'Adobe maintient CEP).
+### Publier une release
+
+1. Mettre à jour `ExtensionBundleVersion` (deux occurrences) dans `CSXS/manifest.xml`.
+2. Tagger : `git tag v1.2.3 && git push origin v1.2.3`.
+3. GitHub Actions compile `Sauron-Setup.exe` (Inno Setup) et publie la release — c'est elle
+   que le bouton de mise à jour du panneau interroge.
 
 ## Debug
 

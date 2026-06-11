@@ -84,3 +84,12 @@ button:hover { background: #4a4a4a; }
 }
 #log .err  { color: #dc8f8f; }
 #log .warn { color: #dcd48f; }
+
+.footer-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 6px;
+}
+button.small { padding: 2px 8px; font-size: 11px; }
+button:disabled { opacity: 0.5; cursor: default; }
