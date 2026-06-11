@@ -186,12 +186,19 @@ function normalizePath(p) {
 // Premiere peut connaître le même fichier sous un autre chemin absolu que le
 // nôtre (importé via \\nas\... alors que le projet est ouvert via Z:\, ancienne
 // casse…) : on compare la FIN du chemin (la partie relative à la racine) au
-// lieu du préfixe.
-function knownElsewhere(key) {
+// lieu du préfixe. Deux fichiers différents peuvent porter le même nom →
+// on départage par la taille en octets (fiable pour rushs comme images).
+// Taille illisible (chemin connu inaccessible d'ici) → considéré connu :
+// dans le doute, on ne crée JAMAIS de doublon.
+function knownElsewhere(key, absPath) {
   var list = state.knownByName[key.split("/").pop()];
   if (!list) { return false; }
   for (var i = 0; i < list.length; i++) {
-    if (list[i].slice(-(key.length + 1)) === "/" + key) { return true; }
+    if (normalizePath(list[i]).slice(-(key.length + 1)) !== "/" + key) { continue; }
+    try {
+      if (fs.statSync(list[i]).size !== fs.statSync(absPath).size) { continue; }
+    } catch (e) { /* incomparable : prudence */ }
+    return true;
   }
   return false;
 }
@@ -363,7 +370,7 @@ function onAddFile(filePath) {
   if (path.basename(filePath).charAt(0) === ".") { return; } // fichiers cachés
   if (isExcluded(filePath)) { return; }
   if (state.registry[key]) { return; }
-  if (knownElsewhere(key)) {
+  if (knownElsewhere(key, filePath)) {
     // Premiere connaît déjà ce fichier sous un autre chemin absolu : on le
     // note dans le registre et on n'importe surtout pas de doublon.
     state.registry[key] = true;
@@ -448,7 +455,8 @@ function startWatcher() {
         if (!p) { return; }
         var norm = normalizePath(p);
         var base = norm.split("/").pop();
-        (state.knownByName[base] = state.knownByName[base] || []).push(norm);
+        // chemin d'origine conservé : il sert à relire la taille du fichier
+        (state.knownByName[base] = state.knownByName[base] || []).push(p);
         if (norm.indexOf(rootPrefix) === 0) {
           var key = norm.slice(rootPrefix.length);
           if (!state.registry[key]) {
