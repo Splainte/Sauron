@@ -23,6 +23,8 @@ var state = {
   elementsDir: "",   // dossier ELEMENTS absolu (recalculé, jamais persisté)
   registryFile: "",
   registry: {},      // { "musique/track.mp3": true } — clés relatives à ELEMENTS
+  configFile: "",
+  config: { excluded: [] }, // dossiers de 1er niveau d'ELEMENTS à ignorer
   queue: Promise.resolve() // sérialise les appels evalScript
 };
 
@@ -33,7 +35,8 @@ var ui = {
   target: document.getElementById("target"),
   log: document.getElementById("log"),
   toggle: document.getElementById("toggle"),
-  polling: document.getElementById("polling")
+  polling: document.getElementById("polling"),
+  folders: document.getElementById("folders")
 };
 
 function setStatus(text, cls) {
@@ -97,6 +100,88 @@ function saveRegistry() {
   }
 }
 
+// ---------- Config par projet (dossiers exclus) ----------
+// Stockée dans .sauron-config.json à côté du .prproj : noms relatifs only,
+// la config voyage avec le projet. Un nouveau dossier est synchronisé par
+// défaut (on ne stocke que les exclusions).
+
+function loadConfig() {
+  state.config = { excluded: [] };
+  try {
+    if (fs.existsSync(state.configFile)) {
+      var c = JSON.parse(fs.readFileSync(state.configFile, "utf8"));
+      if (c && c.excluded instanceof Array) { state.config = c; }
+    }
+  } catch (e) {
+    log("Config illisible, repart des défauts (" + e.message + ")", "warn");
+  }
+}
+
+function saveConfig() {
+  try {
+    fs.writeFileSync(state.configFile, JSON.stringify(state.config, null, 1));
+  } catch (e) {
+    log("Impossible d'écrire la config : " + e.message, "err");
+  }
+}
+
+// Premier segment du chemin relatif à ELEMENTS ("musique/track.mp3" → "musique")
+function topFolder(absPath) {
+  var rel = path.relative(state.elementsDir, absPath);
+  return rel.split(path.sep)[0];
+}
+
+function isExcluded(absPath) {
+  return state.config.excluded.indexOf(topFolder(absPath)) !== -1;
+}
+
+function listTopFolders() {
+  try {
+    return fs.readdirSync(state.elementsDir).filter(function (name) {
+      return name.charAt(0) !== "." &&
+        fs.statSync(path.join(state.elementsDir, name)).isDirectory();
+    }).sort();
+  } catch (e) {
+    return [];
+  }
+}
+
+function renderFolders() {
+  ui.folders.innerHTML = "";
+  var names = listTopFolders();
+  if (!names.length) {
+    ui.folders.innerHTML = '<span class="muted">(aucun sous-dossier)</span>';
+    return;
+  }
+  names.forEach(function (name) {
+    var excluded = state.config.excluded.indexOf(name) !== -1;
+    var label = document.createElement("label");
+    if (excluded) { label.className = "off"; }
+    var box = document.createElement("input");
+    box.type = "checkbox";
+    box.checked = !excluded;
+    box.addEventListener("change", function () {
+      var idx = state.config.excluded.indexOf(name);
+      if (box.checked && idx !== -1) {
+        state.config.excluded.splice(idx, 1);
+      } else if (!box.checked && idx === -1) {
+        state.config.excluded.push(name);
+      }
+      saveConfig();
+      log((box.checked ? "Synchronise " : "Ignore ") + name);
+      // Redémarrer le watcher : un dossier recoché doit rattraper les fichiers
+      // arrivés pendant l'exclusion (le registre dédoublonne le reste).
+      if (state.watcher) {
+        stopWatcher();
+        startWatcher();
+      }
+    });
+    label.appendChild(box);
+    label.appendChild(document.createTextNode(name));
+    ui.folders.appendChild(label);
+  });
+}
+
 // ---------- Cœur : événements fichiers ----------
 
 // "ELEMENTS/musique" pour un fichier ELEMENTS/musique/track.mp3
@@ -111,6 +196,10 @@ function binSegments(absPath) {
 
 function onAddDir(dirPath) {
   if (dirPath === state.elementsDir) { return; }
+  if (path.dirname(dirPath) === state.elementsDir) {
+    renderFolders(); // nouveau dossier de 1er niveau → rafraîchir la liste UI
+  }
+  if (isExcluded(dirPath)) { return; }
   var segs = "ELEMENTS/" +
     path.relative(state.elementsDir, dirPath).split(path.sep).join("/");
   enqueue(function () {
@@ -128,6 +217,7 @@ function onAddDir(dirPath) {
 function onAddFile(filePath) {
   var key = relKey(filePath);
   if (path.basename(filePath).charAt(0) === ".") { return; } // fichiers cachés
+  if (isExcluded(filePath)) { return; }
   if (state.registry[key]) { return; }
   var segs = binSegments(filePath);
   enqueue(function () {
@@ -176,7 +266,10 @@ function startWatcher() {
     state.projectPath = projPath;
     state.elementsDir = elementsDir;
     state.registryFile = path.join(projDir, ".sauron-registry.json");
+    state.configFile = path.join(projDir, ".sauron-config.json");
     loadRegistry();
+    loadConfig();
+    renderFolders();
 
     // Au premier lancement sur un projet, on considère comme déjà importé
     // tout ce que le projet connaît (évite de dédoublonner un projet existant).

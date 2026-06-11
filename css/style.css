@@ -62,6 +62,23 @@ button:hover { background: #4a4a4a; }
   color: #9a9a9a;
 }
 
+.folders-section {
+  margin-bottom: 8px;
+  max-height: 30%;
+  overflow-y: auto;
+}
+.folders-section .label { margin-bottom: 4px; }
+.muted { color: #9a9a9a; }
+
+#folders label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 0;
+  cursor: pointer;
+}
+#folders label.off { color: #777; text-decoration: line-through; }
+
 #log {
   flex: 1;
   overflow-y: auto;

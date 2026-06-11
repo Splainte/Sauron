@@ -24,6 +24,10 @@ NOM DU PROJET/
 - `awaitWriteFinish` : un rush de 4 Go n'est importé qu'une fois sa copie terminée.
 - **Mode NAS (polling)** : case à cocher dans le panneau, à activer si le projet est sur un
   lecteur réseau (inotify/FSEvents non fiables sur montage réseau).
+- **Dossiers synchronisés** : chaque sous-dossier de 1er niveau d'ELEMENTS a sa case à cocher
+  dans le panneau (coché = synchronisé, défaut). Les exclusions sont stockées dans
+  `.sauron-config.json` à côté du `.prproj` (relatif → portable). Recocher un dossier rattrape
+  les fichiers arrivés pendant l'exclusion.
 
 ## Installation (dev, non signé)
 
