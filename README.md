@@ -33,6 +33,8 @@ localiser le dossier `PROJETS` au démarrage.
 - **Proxies ignorés** : tout dossier `Proxies` (où qu'il soit dans l'arbo) et tout fichier
   `*_proxy.*` sont invisibles pour Sauron — la génération de proxies Premiere ne pollue
   jamais les chutiers.
+- **Désactivé par défaut** : ouvrir le panneau ne déclenche rien, la surveillance ne démarre
+  qu'en cliquant sur **Démarrer**.
 - **Dossiers synchronisés** : chaque sous-dossier de 1er niveau d'ELEMENTS a sa case à cocher
   dans le panneau (coché = synchronisé, défaut). Les exclusions sont stockées dans
   `.sauron-config.json` à côté du `.prproj` (relatif → portable). Recocher un dossier rattrape

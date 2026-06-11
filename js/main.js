@@ -518,4 +518,7 @@ ui.toggle.addEventListener("click", function () {
   if (state.watcher) { stopWatcher(); } else { startWatcher(); }
 });
 
-startWatcher();
+// Désactivé par défaut : la surveillance ne démarre que sur clic « Démarrer ».
+setStatus("En pause", "paused");
+ui.toggle.textContent = "Démarrer";
+log("Sauron est prêt — clique sur Démarrer pour surveiller le projet ouvert.");
