@@ -5,19 +5,22 @@ est **importé automatiquement** dans un chutier miroir. Alternative maison et g
 
 ## Comment ça marche
 
-Le panneau lit `app.project.path`, en déduit `ELEMENTS = <dossier du .prproj>/../ELEMENTS`
-(structure projet rigide ci-dessous) et le surveille récursivement avec chokidar :
+Le panneau lit `app.project.path`, en déduit la racine du projet montage (le `.prproj` vit dans
+`PROJETS/`) et la surveille récursivement avec chokidar — **sauf `PROJETS` et `EXPORTS`**,
+exclus en dur :
 
 ```
-NOM DU PROJET/
-├── ELEMENTS/   ← surveillé : tout dépôt déclenche un import
-├── PROJETS/    ← le .prproj (+ .sauron-registry.json, registre anti-doublon)
-├── EXPORTS/
-└── RUSHS/
+NOM DU PROJET/      ← racine surveillée
+├── ELEMENTS/       ← synchronisé → chutier ELEMENTS
+├── RUSHS/          ← synchronisé → chutier RUSHS (idem tout autre dossier)
+├── PROJETS/        ← JAMAIS synchronisé (le .prproj + .sauron-*.json vivent ici)
+└── EXPORTS/        ← JAMAIS synchronisé
 ```
 
 - `ELEMENTS/musique/track.mp3` → importé dans le chutier `musique` **dans** le chutier `ELEMENTS`.
-- Dossier créé → chutier créé (même vide).
+- Dossier créé → chutier créé (même vide), **après stabilisation du nom** : pas de chutier
+  fantôme « Nouveau dossier » pendant que tu tapes le vrai nom (création différée de 8 s,
+  annulée si le dossier est renommé ; les noms par défaut de l'OS ne sont jamais importés tels quels).
 - **Synchro à sens unique (additive)** : on n'efface jamais un chutier quand un dossier disparaît.
 - **Aucun chemin absolu stocké** : tout est recalculé depuis le `.prproj`, le registre n'a que des
   chemins relatifs → le dossier projet reste copiable tel quel sur un disque externe.

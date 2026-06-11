@@ -1,9 +1,10 @@
 /*
  * Sauron — côté panneau CEP (Node.js)
- * Surveille <dossier projet>/../ELEMENTS via chokidar et pousse chaque
- * dossier/fichier vers Premiere (chutiers miroir + import).
+ * Surveille la racine du projet montage (parent de PROJETS) via chokidar,
+ * sauf PROJETS et EXPORTS, et pousse chaque dossier/fichier vers Premiere
+ * (chutiers miroir + import).
  *
- * Portabilité : on ne stocke JAMAIS de chemin absolu. ELEMENTS est recalculé
+ * Portabilité : on ne stocke JAMAIS de chemin absolu. La racine est recalculée
  * depuis app.project.path à chaque démarrage, et le registre anti-doublon
  * (.sauron-registry.json, posé à côté du .prproj) n'utilise que des chemins
  * relatifs — il voyage donc avec le dossier projet.
@@ -49,14 +50,17 @@ try {
     "/node_modules — lancer `npm install` avant d'installer le panneau (" + e.message + ")");
 }
 
+// Dossiers de 1er niveau jamais synchronisés : le projet lui-même et les exports.
+var HARD_EXCLUDED = ["PROJETS", "EXPORTS"];
+
 var state = {
   watcher: null,
   projectPath: "",   // chemin du .prproj actuellement surveillé
-  elementsDir: "",   // dossier ELEMENTS absolu (recalculé, jamais persisté)
+  watchRoot: "",     // racine du projet montage (recalculée, jamais persistée)
   registryFile: "",
-  registry: {},      // { "musique/track.mp3": true } — clés relatives à ELEMENTS
+  registry: {},      // { "ELEMENTS/musique/track.mp3": true } — clés relatives à la racine
   configFile: "",
-  config: { excluded: [] }, // dossiers de 1er niveau d'ELEMENTS à ignorer
+  config: { excluded: [] }, // dossiers de 1er niveau à ignorer (choix utilisateur)
   queue: Promise.resolve() // sérialise les appels evalScript
 };
 
@@ -110,7 +114,7 @@ function enqueue(fn) {
 // ---------- Registre anti-doublon ----------
 
 function relKey(absPath) {
-  return path.relative(state.elementsDir, absPath).split(path.sep).join("/");
+  return path.relative(state.watchRoot, absPath).split(path.sep).join("/");
 }
 
 function loadRegistry() {
@@ -157,21 +161,24 @@ function saveConfig() {
   }
 }
 
-// Premier segment du chemin relatif à ELEMENTS ("musique/track.mp3" → "musique")
+// Premier segment du chemin relatif à la racine ("ELEMENTS/x.mp3" → "ELEMENTS")
 function topFolder(absPath) {
-  var rel = path.relative(state.elementsDir, absPath);
+  var rel = path.relative(state.watchRoot, absPath);
   return rel.split(path.sep)[0];
 }
 
 function isExcluded(absPath) {
-  return state.config.excluded.indexOf(topFolder(absPath)) !== -1;
+  var top = topFolder(absPath);
+  return HARD_EXCLUDED.indexOf(top) !== -1 ||
+         state.config.excluded.indexOf(top) !== -1;
 }
 
 function listTopFolders() {
   try {
-    return fs.readdirSync(state.elementsDir).filter(function (name) {
+    return fs.readdirSync(state.watchRoot).filter(function (name) {
       return name.charAt(0) !== "." &&
-        fs.statSync(path.join(state.elementsDir, name)).isDirectory();
+        HARD_EXCLUDED.indexOf(name) === -1 &&
+        fs.statSync(path.join(state.watchRoot, name)).isDirectory();
     }).sort();
   } catch (e) {
     return [];
@@ -216,34 +223,55 @@ function renderFolders() {
 
 // ---------- Cœur : événements fichiers ----------
 
-// "ELEMENTS/musique" pour un fichier ELEMENTS/musique/track.mp3
+// "ELEMENTS/musique" pour un fichier ELEMENTS/musique/track.mp3 ;
+// "" pour un fichier posé à la racine du projet (import à la racine).
 function binSegments(absPath) {
-  var rel = path.relative(state.elementsDir, path.dirname(absPath));
-  var segs = ["ELEMENTS"];
-  if (rel && rel !== ".") {
-    segs = segs.concat(rel.split(path.sep));
-  }
-  return segs.join("/");
+  var rel = path.relative(state.watchRoot, path.dirname(absPath));
+  if (!rel || rel === ".") { return ""; }
+  return rel.split(path.sep).join("/");
 }
 
+// Windows/macOS créent d'abord « Nouveau dossier » que l'utilisateur renomme
+// ensuite : créer le chutier immédiatement donnerait un chutier fantôme par
+// nom transitoire. On attend donc que le nom soit stable, et on ne crée
+// jamais de chutier pour un nom de dossier par défaut (un fichier déposé
+// dedans créera le chutier de toute façon, via l'import).
+var PENDING_DIR_DELAY = 8000;
+var DEFAULT_DIR_NAMES = /^(nouveau dossier|new folder|untitled folder)/i;
+var pendingDirs = {}; // absPath → timer
+
 function onAddDir(dirPath) {
-  if (dirPath === state.elementsDir) { return; }
-  if (path.dirname(dirPath) === state.elementsDir) {
+  if (dirPath === state.watchRoot) { return; }
+  if (path.dirname(dirPath) === state.watchRoot) {
     renderFolders(); // nouveau dossier de 1er niveau → rafraîchir la liste UI
   }
   if (isExcluded(dirPath)) { return; }
-  var segs = "ELEMENTS/" +
-    path.relative(state.elementsDir, dirPath).split(path.sep).join("/");
-  enqueue(function () {
-    return evalScript('SAURON.createBins("' + escapeJsxString(segs) + '")')
-      .then(function (res) {
-        if (res === "OK") {
-          log("Chutier : " + segs);
-        } else {
-          log("Échec chutier " + segs + " → " + res, "err");
-        }
-      });
-  });
+  if (DEFAULT_DIR_NAMES.test(path.basename(dirPath))) { return; }
+  pendingDirs[dirPath] = setTimeout(function () {
+    delete pendingDirs[dirPath];
+    if (!fs.existsSync(dirPath)) { return; } // renommé/supprimé entre-temps
+    var segs = path.relative(state.watchRoot, dirPath).split(path.sep).join("/");
+    enqueue(function () {
+      return evalScript('SAURON.createBins("' + escapeJsxString(segs) + '")')
+        .then(function (res) {
+          if (res === "OK") {
+            log("Chutier : " + segs);
+          } else {
+            log("Échec chutier " + segs + " → " + res, "err");
+          }
+        });
+    });
+  }, PENDING_DIR_DELAY);
+}
+
+// Un renommage = unlinkDir (ancien nom) + addDir (nouveau nom) : annuler le
+// chutier en attente sous l'ancien nom.
+function onUnlinkDir(dirPath) {
+  if (pendingDirs[dirPath]) {
+    clearTimeout(pendingDirs[dirPath]);
+    delete pendingDirs[dirPath];
+  }
+  if (path.dirname(dirPath) === state.watchRoot) { renderFolders(); }
 }
 
 function onAddFile(filePath) {
@@ -275,6 +303,10 @@ function stopWatcher() {
     state.watcher.close();
     state.watcher = null;
   }
+  Object.keys(pendingDirs).forEach(function (k) {
+    clearTimeout(pendingDirs[k]);
+    delete pendingDirs[k];
+  });
   setStatus("En pause", "paused");
   ui.toggle.textContent = "Démarrer";
 }
@@ -291,17 +323,18 @@ function startWatcher() {
       log("Ouvre un projet .prproj puis relance.", "warn");
       return;
     }
-    // .prproj dans PROJETS/ → ELEMENTS = <dossier .prproj>/../ELEMENTS
+    // .prproj dans PROJETS/ → on surveille toute la racine du projet montage
+    // (parent de PROJETS), PROJETS et EXPORTS exclus en dur.
     var projDir = path.dirname(projPath);
-    var elementsDir = path.resolve(projDir, "..", "ELEMENTS");
-    if (!fs.existsSync(elementsDir)) {
-      setStatus("ELEMENTS introuvable", "err");
-      log("Pas de dossier ELEMENTS à côté de PROJETS : " + elementsDir, "err");
+    var watchRoot = path.resolve(projDir, "..");
+    if (path.basename(projDir).toUpperCase() !== "PROJETS") {
+      setStatus("Structure inattendue", "err");
+      log("Le .prproj n'est pas dans un dossier PROJETS : " + projDir, "err");
       return;
     }
 
     state.projectPath = projPath;
-    state.elementsDir = elementsDir;
+    state.watchRoot = watchRoot;
     state.registryFile = path.join(projDir, ".sauron-registry.json");
     state.configFile = path.join(projDir, ".sauron-config.json");
     loadRegistry();
@@ -314,7 +347,7 @@ function startWatcher() {
       var changed = false;
       known.split("\n").forEach(function (p) {
         if (!p) { return; }
-        if (p.indexOf(elementsDir) === 0) {
+        if (p.indexOf(watchRoot) === 0) {
           var key = relKey(p);
           if (!state.registry[key]) {
             state.registry[key] = true;
@@ -325,8 +358,15 @@ function startWatcher() {
       if (changed) { saveRegistry(); }
 
       var usePolling = ui.polling.checked;
-      state.watcher = chokidar.watch(elementsDir, {
-        ignored: /(^|[\/\\])\../, // fichiers/dossiers cachés
+      state.watcher = chokidar.watch(watchRoot, {
+        ignored: [
+          /(^|[\/\\])\../, // fichiers/dossiers cachés
+          function (p) {   // PROJETS / EXPORTS : pas même surveillés
+            var rel = path.relative(watchRoot, p);
+            return rel !== "" &&
+              HARD_EXCLUDED.indexOf(rel.split(path.sep)[0]) !== -1;
+          }
+        ],
         persistent: true,
         usePolling: usePolling,
         interval: usePolling ? 2000 : 100,
@@ -334,15 +374,16 @@ function startWatcher() {
         awaitWriteFinish: { stabilityThreshold: 2000, pollInterval: 500 }
       });
       state.watcher.on("addDir", onAddDir);
+      state.watcher.on("unlinkDir", onUnlinkDir);
       state.watcher.on("add", onAddFile);
       state.watcher.on("error", function (e) {
         log("Watcher : " + e.message, "err");
       });
 
       setStatus("Surveillance active" + (usePolling ? " (polling)" : ""), "ok");
-      ui.target.textContent = elementsDir;
+      ui.target.textContent = watchRoot + " (sauf " + HARD_EXCLUDED.join(", ") + ")";
       ui.toggle.textContent = "Arrêter";
-      log("Surveille " + elementsDir);
+      log("Surveille " + watchRoot);
     });
   });
 }

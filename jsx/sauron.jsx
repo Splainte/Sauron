@@ -45,7 +45,7 @@ var SAURON = (function () {
     createBins: function (segmentsJoined) {
       try {
         if (!app.project) { return "ERR:no-project"; }
-        findOrCreateBinPath(segmentsJoined.split("/"));
+        if (segmentsJoined) { findOrCreateBinPath(segmentsJoined.split("/")); }
         return "OK";
       } catch (e) {
         return "ERR:" + e.toString();
@@ -54,11 +54,13 @@ var SAURON = (function () {
 
     // Importe un fichier dans le chutier miroir de son dossier.
     // filePath = chemin absolu (recalculé par le panneau à chaque session),
-    // segmentsJoined = "ELEMENTS/musique" (chutier cible).
+    // segmentsJoined = "ELEMENTS/musique" (chutier cible), "" = racine du projet.
     importFile: function (filePath, segmentsJoined) {
       try {
         if (!app.project) { return "ERR:no-project"; }
-        var bin = findOrCreateBinPath(segmentsJoined.split("/"));
+        var bin = segmentsJoined
+          ? findOrCreateBinPath(segmentsJoined.split("/"))
+          : app.project.rootItem;
         var ok = app.project.importFiles([filePath], true, bin, false);
         return ok ? "OK" : "ERR:import-failed";
       } catch (e) {
