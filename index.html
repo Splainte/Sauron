@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <title>Sauron</title>
+  <link rel="stylesheet" href="css/style.css"/>
+</head>
+<body>
+  <header>
+    <h1>👁 Sauron</h1>
+    <div id="status" class="status paused">Démarrage…</div>
+  </header>
+
+  <div class="target-row">
+    <span class="label">Surveille :</span>
+    <span id="target">—</span>
+  </div>
+
+  <div class="controls">
+    <button id="toggle">Démarrer</button>
+    <label class="polling-label" title="À activer si le projet est sur un NAS / lecteur réseau">
+      <input type="checkbox" id="polling"/> Mode NAS (polling)
+    </label>
+  </div>
+
+  <div id="log"></div>
+
+  <script src="js/CSInterface.js"></script>
+  <script src="js/main.js"></script>
+</body>
+</html>
