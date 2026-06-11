@@ -32,9 +32,11 @@ NOM DU PROJET/
 ## Installation (dev, non signé)
 
 ```bash
-git clone <repo> && cd Sauron
-npm install        # chokidar doit être présent dans node_modules/
+git clone https://github.com/Splainte/Sauron.git && cd Sauron
 ```
+
+Les dépendances (`node_modules/`, ~600 Ko) sont versionnées dans le repo : **pas besoin de
+Node/npm sur la machine de montage**, un `git pull` suffit pour se mettre à jour.
 
 - **Windows** : double-clic sur `install/install-windows.bat`
 - **macOS** : `bash install/install-macos.sh`
