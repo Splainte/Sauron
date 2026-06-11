@@ -25,8 +25,9 @@ NOM DU PROJET/      ← racine surveillée
 - **Aucun chemin absolu stocké** : tout est recalculé depuis le `.prproj`, le registre n'a que des
   chemins relatifs → le dossier projet reste copiable tel quel sur un disque externe.
 - `awaitWriteFinish` : un rush de 4 Go n'est importé qu'une fois sa copie terminée.
-- **Mode NAS (polling)** : case à cocher dans le panneau, à activer si le projet est sur un
-  lecteur réseau (inotify/FSEvents non fiables sur montage réseau).
+- **Proxies ignorés** : tout dossier `Proxies` (où qu'il soit dans l'arbo) et tout fichier
+  `*_proxy.*` sont invisibles pour Sauron — la génération de proxies Premiere ne pollue
+  jamais les chutiers.
 - **Dossiers synchronisés** : chaque sous-dossier de 1er niveau d'ELEMENTS a sa case à cocher
   dans le panneau (coché = synchronisé, défaut). Les exclusions sont stockées dans
   `.sauron-config.json` à côté du `.prproj` (relatif → portable). Recocher un dossier rattrape

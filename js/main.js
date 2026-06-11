@@ -53,6 +53,11 @@ try {
 // Dossiers de 1er niveau jamais synchronisés : le projet lui-même et les exports.
 var HARD_EXCLUDED = ["PROJETS", "EXPORTS"];
 
+// Proxies générés par Premiere : dossier « Proxies » (n'importe où dans
+// l'arbo) + fichiers suffixés _proxy — jamais surveillés ni importés.
+var PROXY_DIR = /^proxies$/i;
+var PROXY_FILE = /_proxy\.[^.]+$/i;
+
 var state = {
   watcher: null,
   projectPath: "",   // chemin du .prproj actuellement surveillé
@@ -71,7 +76,6 @@ var ui = {
   target: document.getElementById("target"),
   log: document.getElementById("log"),
   toggle: document.getElementById("toggle"),
-  polling: document.getElementById("polling"),
   folders: document.getElementById("folders")
 };
 
@@ -357,19 +361,21 @@ function startWatcher() {
       });
       if (changed) { saveRegistry(); }
 
-      var usePolling = ui.polling.checked;
       state.watcher = chokidar.watch(watchRoot, {
         ignored: [
           /(^|[\/\\])\../, // fichiers/dossiers cachés
-          function (p) {   // PROJETS / EXPORTS : pas même surveillés
+          function (p) {   // PROJETS / EXPORTS / proxies : pas même surveillés
             var rel = path.relative(watchRoot, p);
-            return rel !== "" &&
-              HARD_EXCLUDED.indexOf(rel.split(path.sep)[0]) !== -1;
+            if (rel === "") { return false; }
+            var segs = rel.split(path.sep);
+            if (HARD_EXCLUDED.indexOf(segs[0]) !== -1) { return true; }
+            for (var i = 0; i < segs.length; i++) {
+              if (PROXY_DIR.test(segs[i])) { return true; }
+            }
+            return PROXY_FILE.test(path.basename(p));
           }
         ],
         persistent: true,
-        usePolling: usePolling,
-        interval: usePolling ? 2000 : 100,
         // attend que la copie soit FINIE avant de notifier (rush 4 Go…)
         awaitWriteFinish: { stabilityThreshold: 2000, pollInterval: 500 }
       });
@@ -380,7 +386,7 @@ function startWatcher() {
         log("Watcher : " + e.message, "err");
       });
 
-      setStatus("Surveillance active" + (usePolling ? " (polling)" : ""), "ok");
+      setStatus("Surveillance active", "ok");
       ui.target.textContent = watchRoot + " (sauf " + HARD_EXCLUDED.join(", ") + ")";
       ui.toggle.textContent = "Arrêter";
       log("Surveille " + watchRoot);
@@ -404,15 +410,6 @@ setInterval(function () {
 
 ui.toggle.addEventListener("click", function () {
   if (state.watcher) { stopWatcher(); } else { startWatcher(); }
-});
-
-ui.polling.checked = localStorage.getItem("sauron.polling") === "1";
-ui.polling.addEventListener("change", function () {
-  localStorage.setItem("sauron.polling", ui.polling.checked ? "1" : "0");
-  if (state.watcher) { // appliquer à chaud
-    stopWatcher();
-    startWatcher();
-  }
 });
 
 startWatcher();

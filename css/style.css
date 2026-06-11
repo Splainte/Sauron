@@ -54,14 +54,6 @@ button {
 }
 button:hover { background: #4a4a4a; }
 
-.polling-label {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  cursor: pointer;
-  color: #9a9a9a;
-}
-
 .folders-section {
   margin-bottom: 8px;
   max-height: 30%;
