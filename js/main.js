@@ -54,9 +54,59 @@ try {
 var HARD_EXCLUDED = ["PROJETS", "EXPORTS"];
 
 // Proxies générés par Premiere : dossier « Proxies » (n'importe où dans
-// l'arbo) + fichiers suffixés _proxy — jamais surveillés ni importés.
-var PROXY_DIR = /^proxies$/i;
+// l'arbo, variantes d'orthographe incluses) + fichiers suffixés _proxy —
+// jamais surveillés ni importés.
+var PROXY_DIR = /^prox(y|ys|ies|ie|xies)$/i;
 var PROXY_FILE = /_proxy\.[^.]+$/i;
+
+// Les monteurs écrivent « EXPORT », « exports », « Projet »… → comparaison
+// tolérante : minuscules, sans accents ni espaces, S final ignoré, et une
+// faute de frappe d'écart maximum.
+function normalizeName(name) {
+  var n = String(name).toLowerCase();
+  try {
+    n = n.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  } catch (e) { /* vieux runtime sans String.normalize : on garde les accents */ }
+  return n.replace(/\s+/g, "").replace(/s$/, "");
+}
+
+// Damerau-Levenshtein : une transposition (« EXPROTS ») compte pour 1 édition.
+function levenshtein(a, b) {
+  if (a === b) { return 0; }
+  var prevPrev = [], prev = [], cur = [], i, j;
+  for (j = 0; j <= b.length; j++) { prev[j] = j; }
+  for (i = 1; i <= a.length; i++) {
+    cur = [i];
+    for (j = 1; j <= b.length; j++) {
+      cur[j] = Math.min(
+        prev[j] + 1,
+        cur[j - 1] + 1,
+        prev[j - 1] + (a.charAt(i - 1) === b.charAt(j - 1) ? 0 : 1)
+      );
+      if (i > 1 && j > 1 &&
+          a.charAt(i - 1) === b.charAt(j - 2) &&
+          a.charAt(i - 2) === b.charAt(j - 1)) {
+        cur[j] = Math.min(cur[j], prevPrev[j - 2] + 1);
+      }
+    }
+    prevPrev = prev;
+    prev = cur;
+  }
+  return prev[b.length];
+}
+
+function fuzzyMatch(name, ref) {
+  var a = normalizeName(name);
+  var b = normalizeName(ref);
+  return a === b || levenshtein(a, b) <= 1;
+}
+
+function isHardExcluded(name) {
+  for (var i = 0; i < HARD_EXCLUDED.length; i++) {
+    if (fuzzyMatch(name, HARD_EXCLUDED[i])) { return true; }
+  }
+  return false;
+}
 
 var state = {
   watcher: null,
@@ -173,7 +223,7 @@ function topFolder(absPath) {
 
 function isExcluded(absPath) {
   var top = topFolder(absPath);
-  return HARD_EXCLUDED.indexOf(top) !== -1 ||
+  return isHardExcluded(top) ||
          state.config.excluded.indexOf(top) !== -1;
 }
 
@@ -181,7 +231,7 @@ function listTopFolders() {
   try {
     return fs.readdirSync(state.watchRoot).filter(function (name) {
       return name.charAt(0) !== "." &&
-        HARD_EXCLUDED.indexOf(name) === -1 &&
+        !isHardExcluded(name) &&
         fs.statSync(path.join(state.watchRoot, name)).isDirectory();
     }).sort();
   } catch (e) {
@@ -331,7 +381,7 @@ function startWatcher() {
     // (parent de PROJETS), PROJETS et EXPORTS exclus en dur.
     var projDir = path.dirname(projPath);
     var watchRoot = path.resolve(projDir, "..");
-    if (path.basename(projDir).toUpperCase() !== "PROJETS") {
+    if (!fuzzyMatch(path.basename(projDir), "PROJETS")) {
       setStatus("Structure inattendue", "err");
       log("Le .prproj n'est pas dans un dossier PROJETS : " + projDir, "err");
       return;
@@ -368,7 +418,7 @@ function startWatcher() {
             var rel = path.relative(watchRoot, p);
             if (rel === "") { return false; }
             var segs = rel.split(path.sep);
-            if (HARD_EXCLUDED.indexOf(segs[0]) !== -1) { return true; }
+            if (isHardExcluded(segs[0])) { return true; }
             for (var i = 0; i < segs.length; i++) {
               if (PROXY_DIR.test(segs[i])) { return true; }
             }

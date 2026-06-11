@@ -17,6 +17,11 @@ NOM DU PROJET/      ← racine surveillée
 └── EXPORTS/        ← JAMAIS synchronisé
 ```
 
+La reconnaissance de `PROJETS`/`EXPORTS` (et du dossier `Proxies`) est **tolérante aux
+variantes** : casse, accents, espaces, S final et une faute de frappe près
+(« EXPORT », « exports », « Éxports », « EXPROTS »… sont tous reconnus). Pareil pour
+localiser le dossier `PROJETS` au démarrage.
+
 - `ELEMENTS/musique/track.mp3` → importé dans le chutier `musique` **dans** le chutier `ELEMENTS`.
 - Dossier créé → chutier créé (même vide), **après stabilisation du nom** : pas de chutier
   fantôme « Nouveau dossier » pendant que tu tapes le vrai nom (création différée de 8 s,
