@@ -489,6 +489,9 @@ function startWatcher() {
       state.watcher.on("unlinkDir", onUnlinkDir);
       state.watcher.on("add", onAddFile);
       state.watcher.on("error", function (e) {
+        // Windows émet EPERM quand on supprime un dossier en cours de
+        // surveillance : bénin (le dossier n'existe plus), on n'alarme pas.
+        if (e.code === "EPERM") { return; }
         log("Watcher : " + e.message, "err");
       });
 
