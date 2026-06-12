@@ -1,11 +1,14 @@
 /*
  * Sauron — côté panneau CEP (Node.js)
- * Surveille la racine du projet montage (parent de PROJETS) via chokidar,
- * sauf PROJETS et EXPORTS, et pousse chaque dossier/fichier vers Premiere
- * (chutiers miroir + import).
+ * Fonctionnement ponctuel, en deux temps :
+ *  - « Check » : repère la racine du projet montage (parent de PROJETS),
+ *    liste ses dossiers de 1er niveau (cases à cocher) et compte ce que
+ *    Premiere ne connaît pas encore. N'importe RIEN.
+ *  - « Synchroniser » : importe le contenu des dossiers cochés vers des
+ *    chutiers miroir, en évitant les doublons.
  *
  * Portabilité : on ne stocke JAMAIS de chemin absolu. La racine est recalculée
- * depuis app.project.path à chaque démarrage, et le registre anti-doublon
+ * depuis app.project.path à chaque Check, et le registre anti-doublon
  * (.sauron-registry.json, posé à côté du .prproj) n'utilise que des chemins
  * relatifs — il voyage donc avec le dossier projet.
  */
@@ -42,24 +45,14 @@ var urlMod = nodeRequire("url");
 var spawn = nodeRequire("child_process").spawn;
 
 var cs = new CSInterface();
-
-// Le require de CEP ne résout pas node_modules relativement au HTML de façon
-// fiable → chargement par chemin absolu depuis la racine de l'extension.
 var extDir = cs.getSystemPath(SystemPath.EXTENSION);
-var chokidar;
-try {
-  chokidar = nodeRequire(path.join(extDir, "node_modules", "chokidar"));
-} catch (e) {
-  throw new Error("chokidar introuvable dans " + extDir +
-    "/node_modules — lancer `npm install` avant d'installer le panneau (" + e.message + ")");
-}
 
 // Dossiers de 1er niveau jamais synchronisés : le projet lui-même et les exports.
 var HARD_EXCLUDED = ["PROJETS", "EXPORTS"];
 
 // Proxies générés par Premiere : dossier « Proxies » (n'importe où dans
 // l'arbo, variantes d'orthographe incluses) + fichiers suffixés _proxy —
-// jamais surveillés ni importés.
+// jamais listés ni importés.
 var PROXY_DIR = /^prox(y|ys|ies|ie|xies)$/i;
 var PROXY_FILE = /_proxy\.[^.]+$/i;
 
@@ -113,16 +106,17 @@ function isHardExcluded(name) {
 }
 
 var state = {
-  watcher: null,
-  projectPath: "",   // chemin du .prproj actuellement surveillé
+  projectPath: "",   // chemin du .prproj du dernier Check
   watchRoot: "",     // racine du projet montage (recalculée, jamais persistée)
   registryFile: "",
-  registry: {},      // { "ELEMENTS/musique/track.mp3": true } — clés relatives à la racine
+  registry: {},      // { "elements/musique/track.mp3": true } — clés relatives minuscules
   configFile: "",
-  config: { excluded: [] }, // dossiers de 1er niveau à ignorer (choix utilisateur)
-  knownByName: {},   // nom de fichier → chemins (normalisés) que Premiere connaît déjà
-  queue: Promise.resolve() // sérialise les appels evalScript
+  config: { excluded: [] }, // dossiers de 1er niveau décochés (choix utilisateur)
+  knownByName: {}    // nom de fichier → chemins que Premiere connaît déjà
 };
+
+var busy = false;        // un Check ou une Synchro est en cours
+var checkedOnce = false; // Synchroniser n'est actif qu'après un Check réussi
 
 // ---------- UI ----------
 
@@ -130,7 +124,8 @@ var ui = {
   status: document.getElementById("status"),
   target: document.getElementById("target"),
   log: document.getElementById("log"),
-  toggle: document.getElementById("toggle"),
+  check: document.getElementById("check"),
+  sync: document.getElementById("sync"),
   folders: document.getElementById("folders"),
   version: document.getElementById("version"),
   update: document.getElementById("update")
@@ -139,6 +134,11 @@ var ui = {
 function setStatus(text, cls) {
   ui.status.textContent = text;
   ui.status.className = "status " + (cls || "");
+}
+
+function setButtons() {
+  ui.check.disabled = busy;
+  ui.sync.disabled = busy || !checkedOnce;
 }
 
 function log(msg, cls) {
@@ -164,12 +164,16 @@ function evalScript(script) {
   });
 }
 
-// Sérialise les ordres vers Premiere : un import à la fois, dans l'ordre.
-function enqueue(fn) {
-  state.queue = state.queue.then(fn).catch(function (e) {
-    log("Erreur interne : " + e, "err");
-  });
-  return state.queue;
+// Exécute fn sur chaque élément, un à la fois, dans l'ordre (un seul ordre
+// evalScript en vol vers Premiere à la fois).
+function sequence(items, fn) {
+  return items.reduce(function (p, item) {
+    return p.then(function () { return fn(item); });
+  }, Promise.resolve());
+}
+
+function delay(ms) {
+  return new Promise(function (resolve) { setTimeout(resolve, ms); });
 }
 
 // ---------- Registre anti-doublon ----------
@@ -234,7 +238,7 @@ function saveRegistry() {
 
 // ---------- Config par projet (dossiers exclus) ----------
 // Stockée dans .sauron-config.json à côté du .prproj : noms relatifs only,
-// la config voyage avec le projet. Un nouveau dossier est synchronisé par
+// la config voyage avec le projet. Un nouveau dossier est coché par
 // défaut (on ne stocke que les exclusions).
 
 function loadConfig() {
@@ -257,18 +261,6 @@ function saveConfig() {
   }
 }
 
-// Premier segment du chemin relatif à la racine ("ELEMENTS/x.mp3" → "ELEMENTS")
-function topFolder(absPath) {
-  var rel = path.relative(state.watchRoot, absPath);
-  return rel.split(path.sep)[0];
-}
-
-function isExcluded(absPath) {
-  var top = topFolder(absPath);
-  return isHardExcluded(top) ||
-         state.config.excluded.indexOf(top) !== -1;
-}
-
 function listTopFolders() {
   try {
     return fs.readdirSync(state.watchRoot).filter(function (name) {
@@ -281,7 +273,8 @@ function listTopFolders() {
   }
 }
 
-function renderFolders() {
+// counts : { nom: nb de nouveaux fichiers } calculé par le Check (optionnel).
+function renderFolders(counts) {
   ui.folders.innerHTML = "";
   var names = listTopFolders();
   if (!names.length) {
@@ -302,102 +295,277 @@ function renderFolders() {
       } else if (!box.checked && idx === -1) {
         state.config.excluded.push(name);
       }
+      label.className = box.checked ? "" : "off";
       saveConfig();
-      log((box.checked ? "Synchronise " : "Ignore ") + name);
-      // Redémarrer le watcher : un dossier recoché doit rattraper les fichiers
-      // arrivés pendant l'exclusion (le registre dédoublonne le reste).
-      if (state.watcher) {
-        stopWatcher();
-        startWatcher();
-      }
     });
     label.appendChild(box);
-    label.appendChild(document.createTextNode(name));
+    var text = name;
+    if (counts && counts.hasOwnProperty(name)) {
+      text += counts[name] > 0 ?
+        " — " + counts[name] + " nouveau" + (counts[name] > 1 ? "x" : "") :
+        " — à jour";
+    }
+    label.appendChild(document.createTextNode(text));
     ui.folders.appendChild(label);
   });
 }
 
-// ---------- Cœur : événements fichiers ----------
+// ---------- Détection (Check) ----------
 
 // "ELEMENTS/musique" pour un fichier ELEMENTS/musique/track.mp3 ;
-// "" pour un fichier posé à la racine du projet (import à la racine).
+// "" pour un fichier posé à la racine du projet.
 function binSegments(absPath) {
   var rel = path.relative(state.watchRoot, path.dirname(absPath));
   if (!rel || rel === ".") { return ""; }
   return rel.split(path.sep).join("/");
 }
 
-// Windows/macOS créent d'abord « Nouveau dossier » que l'utilisateur renomme
-// ensuite : créer le chutier immédiatement donnerait un chutier fantôme par
-// nom transitoire. On attend donc que le nom soit stable, et on ne crée
-// jamais de chutier pour un nom de dossier par défaut (un fichier déposé
-// dedans créera le chutier de toute façon, via l'import).
-var PENDING_DIR_DELAY = 8000;
-var DEFAULT_DIR_NAMES = /^(nouveau dossier|new folder|untitled folder)/i;
-var pendingDirs = {}; // absPath → timer
-
-function onAddDir(dirPath) {
-  if (dirPath === state.watchRoot) { return; }
-  if (path.dirname(dirPath) === state.watchRoot) {
-    renderFolders(); // nouveau dossier de 1er niveau → rafraîchir la liste UI
-  }
-  if (isExcluded(dirPath)) { return; }
-  if (DEFAULT_DIR_NAMES.test(path.basename(dirPath))) { return; }
-  pendingDirs[dirPath] = setTimeout(function () {
-    delete pendingDirs[dirPath];
-    if (!fs.existsSync(dirPath)) { return; } // renommé/supprimé entre-temps
-    var segs = path.relative(state.watchRoot, dirPath).split(path.sep).join("/");
-    enqueue(function () {
-      return evalScript('SAURON.createBins("' + escapeJsxString(segs) + '")')
-        .then(function (res) {
-          if (res === "OK") {
-            log("Chutier : " + segs);
-          } else {
-            log("Échec chutier " + segs + " → " + res, "err");
-          }
-        });
-    });
-  }, PENDING_DIR_DELAY);
-}
-
-// Un renommage = unlinkDir (ancien nom) + addDir (nouveau nom) : annuler le
-// chutier en attente sous l'ancien nom.
-function onUnlinkDir(dirPath) {
-  if (pendingDirs[dirPath]) {
-    clearTimeout(pendingDirs[dirPath]);
-    delete pendingDirs[dirPath];
-  }
-  if (path.dirname(dirPath) === state.watchRoot) { renderFolders(); }
-}
-
-function onAddFile(filePath) {
-  var key = normKey(filePath);
-  var rel = relKey(filePath); // pour l'affichage (casse d'origine)
-  if (path.basename(filePath).charAt(0) === ".") { return; } // fichiers cachés
-  if (isExcluded(filePath)) { return; }
-  if (state.registry[key]) { return; }
-  if (knownElsewhere(key, filePath)) {
-    // Premiere connaît déjà ce fichier sous un autre chemin absolu : on le
-    // note dans le registre et on n'importe surtout pas de doublon.
-    state.registry[key] = true;
-    saveRegistry();
+// Parcours récursif d'un dossier : collecte les sous-dossiers (pour les
+// chutiers, même vides) et les fichiers, en sautant cachés et proxies.
+function walk(dir, out) {
+  var entries;
+  try {
+    entries = fs.readdirSync(dir);
+  } catch (e) {
+    log("Dossier illisible : " + dir + " (" + e.message + ")", "warn");
     return;
   }
-  var segs = binSegments(filePath);
-  enqueue(function () {
-    return evalScript(
-      'SAURON.importFile("' + escapeJsxString(filePath) + '","' +
-      escapeJsxString(segs) + '")'
-    ).then(function (res) {
-      if (res === "OK") {
-        state.registry[key] = true;
-        saveRegistry();
-        log("Importé : " + rel);
-      } else {
-        log("Échec import " + rel + " → " + res, "err");
+  entries.forEach(function (name) {
+    if (name.charAt(0) === ".") { return; }
+    var p = path.join(dir, name);
+    var st;
+    try { st = fs.statSync(p); } catch (e) { return; }
+    if (st.isDirectory()) {
+      if (PROXY_DIR.test(name)) { return; }
+      out.dirs.push(p);
+      walk(p, out);
+    } else if (st.isFile()) {
+      if (!PROXY_FILE.test(name)) { out.files.push(p); }
+    }
+  });
+}
+
+// Repère la racine du projet montage depuis le .prproj ouvert dans Premiere.
+function resolveProject() {
+  return evalScript("SAURON.getProjectPath()").then(function (projPath) {
+    if (projPath === "EvalScript error.") {
+      throw new Error("jsx/sauron.jsx n'a pas chargé côté Premiere (EvalScript error)");
+    }
+    if (!projPath) {
+      throw new Error("aucun projet ouvert — ouvre un .prproj puis relance Check");
+    }
+    var projDir = path.dirname(projPath);
+    if (!fuzzyMatch(path.basename(projDir), "PROJETS")) {
+      throw new Error("le .prproj n'est pas dans un dossier PROJETS : " + projDir);
+    }
+    state.projectPath = projPath;
+    state.watchRoot = path.resolve(projDir, "..");
+    state.registryFile = path.join(projDir, ".sauron-registry.json");
+    state.configFile = path.join(projDir, ".sauron-config.json");
+  });
+}
+
+// Considère comme déjà importé tout ce que le projet Premiere connaît
+// (évite de dédoublonner un projet existant). Refuse de continuer si la
+// liste échoue : risque de tout réimporter en doublon sinon.
+function seedFromProject() {
+  return evalScript("SAURON.listImportedPaths()").then(function (known) {
+    if (known === "EvalScript error.") {
+      throw new Error("impossible de lister les médias du projet (EvalScript error)");
+    }
+    var changed = false;
+    var rootPrefix = normalizePath(state.watchRoot) + "/";
+    state.knownByName = {};
+    known.split("\n").forEach(function (p) {
+      if (!p) { return; }
+      var norm = normalizePath(p);
+      var base = norm.split("/").pop();
+      // chemin d'origine conservé : il sert à relire la taille du fichier
+      (state.knownByName[base] = state.knownByName[base] || []).push(p);
+      if (norm.indexOf(rootPrefix) === 0) {
+        var key = norm.slice(rootPrefix.length);
+        if (!state.registry[key]) {
+          state.registry[key] = true;
+          changed = true;
+        }
       }
     });
+    if (changed) { saveRegistry(); }
   });
+}
+
+// Arborescence + fichiers que Premiere ne connaît pas encore, pour un
+// dossier de 1er niveau. Les fichiers connus sous un autre chemin absolu
+// sont notés dans le registre au passage (et jamais réimportés).
+function detectFolder(name) {
+  var out = { dirs: [], files: [] };
+  walk(path.join(state.watchRoot, name), out);
+  var fresh = [];
+  out.files.forEach(function (p) {
+    var key = normKey(p);
+    if (state.registry[key]) { return; }
+    if (knownElsewhere(key, p)) {
+      state.registry[key] = true;
+      return;
+    }
+    fresh.push(p);
+  });
+  return { dirs: out.dirs, fresh: fresh };
+}
+
+function runCheck() {
+  if (busy) { return; }
+  busy = true;
+  setButtons();
+  setStatus("Analyse…", "paused");
+  resolveProject()
+    .then(function () {
+      ui.target.textContent = state.watchRoot;
+      loadRegistry();
+      loadConfig();
+      return seedFromProject();
+    })
+    .then(function () {
+      var counts = {};
+      var total = 0;
+      listTopFolders().forEach(function (name) {
+        var d = detectFolder(name);
+        counts[name] = d.fresh.length;
+        total += d.fresh.length;
+      });
+      saveRegistry(); // fichiers reconnus « ailleurs » notés pendant la détection
+      renderFolders(counts);
+      checkedOnce = true;
+      if (total) {
+        setStatus(total + " nouveau" + (total > 1 ? "x" : "") + " fichier" +
+          (total > 1 ? "s" : ""), "ok");
+        log("Check : " + total + " fichier(s) à importer — coche les dossiers " +
+          "voulus puis clique sur Synchroniser.");
+      } else {
+        setStatus("Tout est à jour", "ok");
+        log("Check : rien de nouveau, Premiere connaît déjà tout.");
+      }
+    })
+    .catch(function (e) {
+      setStatus("Erreur", "err");
+      log("Check impossible : " + e.message, "err");
+    })
+    .then(function () {
+      busy = false;
+      setButtons();
+    });
+}
+
+// ---------- Synchronisation ----------
+
+function importOne(filePath, result) {
+  var key = normKey(filePath);
+  var rel = relKey(filePath); // pour l'affichage (casse d'origine)
+  var segs = binSegments(filePath);
+  return evalScript(
+    'SAURON.importFile("' + escapeJsxString(filePath) + '","' +
+    escapeJsxString(segs) + '")'
+  ).then(function (res) {
+    if (res === "OK") {
+      state.registry[key] = true;
+      saveRegistry();
+      result.imported++;
+      log("Importé : " + rel);
+    } else {
+      result.failed++;
+      log("Échec import " + rel + " → " + res, "err");
+    }
+  });
+}
+
+function createBinFor(dirPath) {
+  var segs = path.relative(state.watchRoot, dirPath).split(path.sep).join("/");
+  return evalScript('SAURON.createBins("' + escapeJsxString(segs) + '")')
+    .then(function (res) {
+      if (res !== "OK") {
+        log("Échec chutier " + segs + " → " + res, "err");
+      }
+    });
+}
+
+function runSync() {
+  if (busy || !checkedOnce) { return; }
+  busy = true;
+  setButtons();
+  setStatus("Synchronisation…", "paused");
+  var result = { imported: 0, failed: 0, skipped: 0 };
+  // Le projet ouvert a pu changer depuis le Check : on revalide tout
+  // (racine, registre, médias connus) avant d'importer quoi que ce soit.
+  resolveProject()
+    .then(function () {
+      ui.target.textContent = state.watchRoot;
+      loadRegistry();
+      loadConfig();
+      return seedFromProject();
+    })
+    .then(function () {
+      var names = listTopFolders().filter(function (name) {
+        return state.config.excluded.indexOf(name) === -1;
+      });
+      var dirs = [];
+      var files = [];
+      names.forEach(function (name) {
+        var d = detectFolder(name);
+        dirs = dirs.concat(d.dirs);
+        files = files.concat(d.fresh);
+      });
+      saveRegistry();
+      if (!files.length) {
+        // Les chutiers miroir restent créés même sans nouveau fichier
+        // (dossiers vides ajoutés depuis la dernière synchro).
+        return sequence(dirs, createBinFor).then(function () {
+          renderFolders();
+          setStatus("Tout est à jour", "ok");
+          log("Synchro : rien de nouveau à importer.");
+        });
+      }
+      // Un fichier encore en cours de copie (gros rush depuis le NAS…) ne
+      // doit pas être importé tronqué : taille relevée deux fois à 2 s
+      // d'écart, on ne garde que les tailles stables.
+      var sizes = {};
+      files.forEach(function (p) {
+        try { sizes[p] = fs.statSync(p).size; } catch (e) { sizes[p] = -1; }
+      });
+      log(files.length + " fichier(s) à importer, vérification des copies en cours…");
+      return delay(2000).then(function () {
+        var stable = files.filter(function (p) {
+          var size = -2;
+          try { size = fs.statSync(p).size; } catch (e) { /* disparu/illisible */ }
+          if (size !== sizes[p]) {
+            result.skipped++;
+            log("Copie en cours, ignoré pour cette fois : " + relKey(p), "warn");
+            return false;
+          }
+          return true;
+        });
+        return sequence(dirs, createBinFor).then(function () {
+          return sequence(stable, function (p) { return importOne(p, result); });
+        });
+      }).then(function () {
+        renderFolders();
+        var parts = [result.imported + " importé" + (result.imported > 1 ? "s" : "")];
+        if (result.failed) { parts.push(result.failed + " échec(s)"); }
+        if (result.skipped) { parts.push(result.skipped + " en cours de copie"); }
+        setStatus(parts.join(", "), result.failed ? "err" : "ok");
+        log("Synchro terminée : " + parts.join(", ") + ".");
+        if (result.skipped) {
+          log("Relance Check puis Synchroniser quand les copies seront finies.", "warn");
+        }
+      });
+    })
+    .catch(function (e) {
+      setStatus("Erreur", "err");
+      log("Synchro impossible : " + e.message, "err");
+    })
+    .then(function () {
+      busy = false;
+      setButtons();
+    });
 }
 
 // ---------- Mise à jour automatique ----------
@@ -521,137 +689,13 @@ function checkUpdate() {
     });
 }
 
-// ---------- Démarrage / arrêt ----------
-
-function stopWatcher() {
-  if (state.watcher) {
-    state.watcher.close();
-    state.watcher = null;
-  }
-  Object.keys(pendingDirs).forEach(function (k) {
-    clearTimeout(pendingDirs[k]);
-    delete pendingDirs[k];
-  });
-  setStatus("En pause", "paused");
-  ui.toggle.textContent = "Démarrer";
-}
-
-function startWatcher() {
-  evalScript("SAURON.getProjectPath()").then(function (projPath) {
-    if (projPath === "EvalScript error.") {
-      setStatus("Erreur ExtendScript", "err");
-      log("jsx/sauron.jsx n'a pas chargé côté Premiere (EvalScript error).", "err");
-      return;
-    }
-    if (!projPath) {
-      setStatus("Aucun projet ouvert", "err");
-      log("Ouvre un projet .prproj puis relance.", "warn");
-      return;
-    }
-    // .prproj dans PROJETS/ → on surveille toute la racine du projet montage
-    // (parent de PROJETS), PROJETS et EXPORTS exclus en dur.
-    var projDir = path.dirname(projPath);
-    var watchRoot = path.resolve(projDir, "..");
-    if (!fuzzyMatch(path.basename(projDir), "PROJETS")) {
-      setStatus("Structure inattendue", "err");
-      log("Le .prproj n'est pas dans un dossier PROJETS : " + projDir, "err");
-      return;
-    }
-
-    state.projectPath = projPath;
-    state.watchRoot = watchRoot;
-    state.registryFile = path.join(projDir, ".sauron-registry.json");
-    state.configFile = path.join(projDir, ".sauron-config.json");
-    loadRegistry();
-    loadConfig();
-    renderFolders();
-
-    // Au premier lancement sur un projet, on considère comme déjà importé
-    // tout ce que le projet connaît (évite de dédoublonner un projet existant).
-    evalScript("SAURON.listImportedPaths()").then(function (known) {
-      if (known === "EvalScript error.") {
-        setStatus("Erreur ExtendScript", "err");
-        log("Impossible de lister les médias du projet : on ne démarre PAS " +
-            "la surveillance (risque de tout réimporter en doublon).", "err");
-        return;
-      }
-      var changed = false;
-      var rootPrefix = normalizePath(watchRoot) + "/";
-      state.knownByName = {};
-      known.split("\n").forEach(function (p) {
-        if (!p) { return; }
-        var norm = normalizePath(p);
-        var base = norm.split("/").pop();
-        // chemin d'origine conservé : il sert à relire la taille du fichier
-        (state.knownByName[base] = state.knownByName[base] || []).push(p);
-        if (norm.indexOf(rootPrefix) === 0) {
-          var key = norm.slice(rootPrefix.length);
-          if (!state.registry[key]) {
-            state.registry[key] = true;
-            changed = true;
-          }
-        }
-      });
-      if (changed) { saveRegistry(); }
-
-      state.watcher = chokidar.watch(watchRoot, {
-        ignored: [
-          /(^|[\/\\])\../, // fichiers/dossiers cachés
-          function (p) {   // PROJETS / EXPORTS / proxies : pas même surveillés
-            var rel = path.relative(watchRoot, p);
-            if (rel === "") { return false; }
-            var segs = rel.split(path.sep);
-            if (isHardExcluded(segs[0])) { return true; }
-            for (var i = 0; i < segs.length; i++) {
-              if (PROXY_DIR.test(segs[i])) { return true; }
-            }
-            return PROXY_FILE.test(path.basename(p));
-          }
-        ],
-        persistent: true,
-        // attend que la copie soit FINIE avant de notifier (rush 4 Go…)
-        awaitWriteFinish: { stabilityThreshold: 2000, pollInterval: 500 }
-      });
-      state.watcher.on("addDir", onAddDir);
-      state.watcher.on("unlinkDir", onUnlinkDir);
-      state.watcher.on("add", onAddFile);
-      state.watcher.on("error", function (e) {
-        // Windows émet EPERM quand on supprime un dossier en cours de
-        // surveillance : bénin (le dossier n'existe plus), on n'alarme pas.
-        if (e.code === "EPERM") { return; }
-        log("Watcher : " + e.message, "err");
-      });
-
-      setStatus("Surveillance active", "ok");
-      ui.target.textContent = watchRoot + " (sauf " + HARD_EXCLUDED.join(", ") + ")";
-      ui.toggle.textContent = "Arrêter";
-      log("Surveille " + watchRoot);
-    });
-  });
-}
-
-// Si Robin change de projet pendant que le panneau tourne, on suit.
-setInterval(function () {
-  if (!state.watcher) { return; }
-  evalScript("SAURON.getProjectPath()").then(function (p) {
-    if (p && p !== state.projectPath) {
-      log("Changement de projet détecté, redémarrage…", "warn");
-      stopWatcher();
-      startWatcher();
-    }
-  });
-}, 5000);
-
 // ---------- Bindings UI ----------
 
-ui.toggle.addEventListener("click", function () {
-  if (state.watcher) { stopWatcher(); } else { startWatcher(); }
-});
-
+ui.check.addEventListener("click", runCheck);
+ui.sync.addEventListener("click", runSync);
 ui.update.addEventListener("click", checkUpdate);
 ui.version.textContent = "v" + currentVersion();
 
-// Désactivé par défaut : la surveillance ne démarre que sur clic « Démarrer ».
-setStatus("En pause", "paused");
-ui.toggle.textContent = "Démarrer";
-log("Sauron est prêt — clique sur Démarrer pour surveiller le projet ouvert.");
+setButtons();
+setStatus("Prêt", "paused");
+log("Sauron est prêt — clique sur Check pour analyser le projet ouvert.");
