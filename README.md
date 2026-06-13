@@ -1,16 +1,24 @@
 # 👁 Sauron
 
-Panneau **CEP pour Adobe Premiere Pro** : tout fichier déposé dans les sous-dossiers du dossier du projet
-est **importé automatiquement** dans un chutier miroir. Alternative maison et gratuite à Watchtower.
+Panneau **CEP pour Adobe Premiere Pro** : synchronise en un clic les dossiers du projet
+(rushs, éléments…) vers des **chutiers miroir** dans Premiere. Alternative maison et
+gratuite à Watchtower.
 
 ## Comment ça marche
 
-Le panneau lit `app.project.path`, en déduit la racine du projet montage (le `.prproj` vit dans
-`PROJETS/`) et la surveille récursivement avec chokidar — **sauf `PROJETS` et `EXPORTS`**,
-exclus en dur :
+Fonctionnement **ponctuel**, en deux temps :
+
+1. **Check** : le panneau lit `app.project.path`, en déduit la racine du projet montage
+   (le `.prproj` vit dans `PROJETS/`), liste ses dossiers de 1er niveau sous forme de
+   **cases à cocher** et compte les fichiers que Premiere ne connaît pas encore.
+   **Rien n'est importé** à cette étape.
+2. **Synchroniser** : importe tout le contenu des dossiers cochés vers des chutiers
+   miroir, en évitant les doublons.
+
+`PROJETS` et `EXPORTS` sont **exclus en dur** :
 
 ```
-NOM DU PROJET/      ← racine surveillée
+NOM DU PROJET/      ← racine du projet montage
 ├── ELEMENTS/       ← synchronisé → chutier ELEMENTS
 ├── RUSHS/          ← synchronisé → chutier RUSHS (idem tout autre dossier)
 ├── PROJETS/        ← JAMAIS synchronisé (le .prproj + .sauron-*.json vivent ici)
@@ -20,25 +28,25 @@ NOM DU PROJET/      ← racine surveillée
 La reconnaissance de `PROJETS`/`EXPORTS` (et du dossier `Proxies`) est **tolérante aux
 variantes** : casse, accents, espaces, S final et une faute de frappe près
 (« EXPORT », « exports », « Éxports », « EXPROTS »… sont tous reconnus). Pareil pour
-localiser le dossier `PROJETS` au démarrage.
+localiser le dossier `PROJETS`.
 
 - `ELEMENTS/musique/track.mp3` → importé dans le chutier `musique` **dans** le chutier `ELEMENTS`.
-- Dossier créé → chutier créé (même vide), **après stabilisation du nom** : pas de chutier
-  fantôme « Nouveau dossier » pendant que tu tapes le vrai nom (création différée de 8 s,
-  annulée si le dossier est renommé ; les noms par défaut de l'OS ne sont jamais importés tels quels).
+- Les sous-dossiers (même vides) deviennent des chutiers à la synchro.
 - **Synchro à sens unique (additive)** : on n'efface jamais un chutier quand un dossier disparaît.
+- **Anti-doublon** : registre `.sauron-registry.json` à côté du `.prproj` + reconnaissance des
+  médias que Premiere connaît déjà sous un autre chemin absolu (UNC vs lettre mappée, casse…),
+  homonymes départagés par la taille en octets. Dans le doute, on n'importe pas.
 - **Aucun chemin absolu stocké** : tout est recalculé depuis le `.prproj`, le registre n'a que des
   chemins relatifs → le dossier projet reste copiable tel quel sur un disque externe.
-- `awaitWriteFinish` : un rush de 4 Go n'est importé qu'une fois sa copie terminée.
+- **Copies en cours détectées** : un fichier dont la taille bouge encore (gros rush depuis le
+  NAS…) est ignoré pour cette synchro, signalé dans le log, et rattrapé à la suivante.
 - **Proxies ignorés** : tout dossier `Proxies` (où qu'il soit dans l'arbo) et tout fichier
   `*_proxy.*` sont invisibles pour Sauron — la génération de proxies Premiere ne pollue
   jamais les chutiers.
-- **Désactivé par défaut** : ouvrir le panneau ne déclenche rien, la surveillance ne démarre
-  qu'en cliquant sur **Démarrer**.
-- **Dossiers synchronisés** : chaque sous-dossier de 1er niveau d'ELEMENTS a sa case à cocher
-  dans le panneau (coché = synchronisé, défaut). Les exclusions sont stockées dans
-  `.sauron-config.json` à côté du `.prproj` (relatif → portable). Recocher un dossier rattrape
-  les fichiers arrivés pendant l'exclusion.
+- **Rien ne se passe sans clic** : ouvrir le panneau ne déclenche aucune analyse ni import.
+- **Cases à cocher** : chaque dossier de 1er niveau est coché par défaut. Les exclusions sont
+  stockées dans `.sauron-config.json` à côté du `.prproj` (relatif → portable). Recocher un
+  dossier rattrape les fichiers arrivés pendant l'exclusion.
 
 ## Installation
 
@@ -58,8 +66,8 @@ Compatibilité : Premiere Pro 2020 (14.0) et + (tant qu'Adobe maintient CEP).
 git clone https://github.com/Splainte/Sauron.git && cd Sauron
 ```
 
-Les dépendances (`node_modules/`, ~600 Ko) sont versionnées dans le repo : **pas besoin de
-Node/npm sur la machine de montage**, un `git pull` suffit pour se mettre à jour.
+Aucune dépendance à installer (panneau 100 % Node intégré à CEP) : un `git pull` suffit
+pour se mettre à jour.
 
 - **Windows** : double-clic sur `install/install-windows.bat`
 - **macOS** : `bash install/install-macos.sh`

@@ -1,9 +1,0 @@
-{
-  "name": "sauron",
-  "version": "0.1.0",
-  "description": "Panneau CEP Premiere Pro : auto-import du dossier ELEMENTS vers des chutiers miroir (alternative maison à Watchtower)",
-  "private": true,
-  "dependencies": {
-    "chokidar": "^3.6.0"
-  }
-}
