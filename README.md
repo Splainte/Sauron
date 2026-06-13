@@ -5,13 +5,13 @@ miroir**, en un clic.
 
 Tu déposes tes fichiers dans les dossiers de ton projet (rushs, sons, éléments…), Sauron
 les retrouve et les range dans Premiere dans des chutiers qui reproduisent l'arborescence
-de tes dossiers — sans doublons, sans clic-par-clic.
+de tes dossiers — sans doublons.
 
 ## Comment ça s'utilise
 
 Le panneau travaille en deux temps, quand **tu** le décides :
 
-1. **Check** — Sauron repère ton projet ouvert, liste ses dossiers (cases à cocher) et
+1. **Check** — Sauron repère ton projet ouvert, liste ses dossiers à synchroniser (cases à cocher) et
    t'indique combien de nouveaux fichiers il a trouvés dans chacun. Rien n'est encore importé.
 2. **Synchroniser** — il importe le contenu des dossiers cochés dans Premiere, en recréant
    l'arborescence sous forme de chutiers et en ignorant ce qui est déjà là.
