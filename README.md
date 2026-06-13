@@ -20,6 +20,23 @@ Décoche un dossier pour ne pas l'importer. Les dossiers `PROJETS` et `EXPORTS` 
 proxies sont ignorés automatiquement. Tu peux relancer Check / Synchroniser autant de fois
 que tu veux : seuls les nouveaux fichiers sont ajoutés.
 
+## L'arborescence attendue
+
+Sauron part du principe que ton `.prproj` vit dans un dossier `PROJETS`, à côté des autres
+dossiers du projet. Il surveille alors **le dossier parent** et tout ce qu'il contient :
+
+```
+📁 NOM DU PROJET/        ← dossier parent (déduit de l'emplacement du .prproj)
+├── 📁 RUSHS/            ← synchronisé → chutier « RUSHS »
+├── 📁 ELEMENTS/         ← synchronisé → chutier « ELEMENTS »
+│   └── 📁 musique/        (un sous-dossier → un sous-chutier)
+├── 📁 PROJETS/          ← le .prproj vit ici · jamais synchronisé
+└── 📁 EXPORTS/          ← jamais synchronisé
+```
+
+Tu peux avoir autant de dossiers que tu veux à côté de `RUSHS` et `ELEMENTS` : chacun
+devient un chutier. Seuls `PROJETS` et `EXPORTS` sont laissés de côté.
+
 ## Installation
 
 **Windows** : télécharge **[Sauron-Setup.exe](https://github.com/Splainte/Sauron/releases/latest)**,
