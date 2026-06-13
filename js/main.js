@@ -664,9 +664,18 @@ function checkUpdate() {
       }
       log("Nouvelle version disponible : v" + latest);
       if (!IS_WINDOWS) {
-        spawn("open", [rel.html_url], { detached: true, stdio: "ignore" }).unref();
-        log("Page de téléchargement ouverte dans le navigateur.");
-        return;
+        // macOS : on télécharge le script d'installation avec Node — donc sans
+        // attribut de quarantaine, donc sans alerte Gatekeeper — et on le lance.
+        // Il récupère et installe la dernière version tout seul.
+        log("Téléchargement du programme d'installation…");
+        var sh = path.join(os.tmpdir(), "sauron-install.sh");
+        return httpsDownload(
+          "https://raw.githubusercontent.com/" + UPDATE_REPO + "/main/install/install-macos.sh",
+          sh
+        ).then(function () {
+          spawn("/bin/bash", [sh], { detached: true, stdio: "ignore" }).unref();
+          log("Mise à jour v" + latest + " en cours — patiente, puis redémarre Premiere.", "warn");
+        });
       }
       var asset = null;
       (rel.assets || []).forEach(function (a) {

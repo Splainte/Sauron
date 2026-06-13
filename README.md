@@ -39,14 +39,30 @@ devient un chutier. Seuls `PROJETS` et `EXPORTS` sont laissés de côté.
 
 ## Installation
 
-**Windows** : télécharge **[Sauron-Setup.exe](https://github.com/Splainte/Sauron/releases/latest)**,
+### Windows
+
+Télécharge **[Sauron-Setup.exe](https://github.com/Splainte/Sauron/releases/latest)**,
 double-clique, suis l'assistant (pas de droits administrateur nécessaires). Puis redémarre
 Premiere et ouvre **Fenêtre > Extensions > Sauron**.
 
 > À la première installation, Windows peut afficher un avertissement SmartScreen (l'app
 > n'est pas signée) : clique sur « Informations complémentaires » puis « Exécuter quand même ».
 
-**Mises à jour** : un bouton **« Vérifier les mises à jour »** en bas du panneau télécharge
-et installe la dernière version tout seul, sans ressortir l'avertissement.
+### macOS
+
+Ouvre le **Terminal** (Applications ▸ Utilitaires) et colle cette ligne, puis Entrée :
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Splainte/Sauron/main/install/install-macos.sh | bash
+```
+
+Ça installe Sauron sans aucun avertissement. Redémarre ensuite Premiere et ouvre
+**Fenêtre > Extensions > Sauron**.
+
+### Mises à jour
+
+Sur les deux systèmes, le bouton **« Vérifier les mises à jour »** en bas du panneau
+télécharge et installe la dernière version tout seul, sans alerte. Il suffit de redémarrer
+Premiere ensuite.
 
 Compatibilité : Premiere Pro 2020 (14.0) et versions ultérieures.
