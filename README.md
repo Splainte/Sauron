@@ -1,7 +1,7 @@
 # 👁 Sauron
 
 Panneau **Adobe Premiere Pro** qui importe les médias de ton projet dans des **chutiers
-miroir**, en un clic. Alternative maison et gratuite à Watchtower.
+miroir**, en un clic.
 
 Tu déposes tes fichiers dans les dossiers de ton projet (rushs, sons, éléments…), Sauron
 les retrouve et les range dans Premiere dans des chutiers qui reproduisent l'arborescence
