@@ -685,7 +685,11 @@ function checkUpdate() {
       log("Téléchargement de " + asset.name + "…");
       var dest = path.join(os.tmpdir(), "Sauron-Setup-v" + latest + ".exe");
       return httpsDownload(asset.browser_download_url, dest).then(function () {
-        spawn(dest, [], { detached: true, stdio: "ignore" }).unref();
+        // Le Node embarqué dans CEP renvoie « spawn UNKNOWN » si on lance un
+        // .exe détaché directement. On passe par cmd /c start, fiable ici.
+        spawn("cmd.exe", ["/c", "start", "", dest], {
+          detached: true, stdio: "ignore", windowsHide: true
+        }).unref();
         log("Installeur v" + latest + " lancé : suis l'assistant, puis redémarre Premiere.", "warn");
       });
     })
