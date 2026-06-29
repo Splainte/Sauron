@@ -1,11 +1,11 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <ExtensionManifest xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
                    ExtensionBundleId="com.splainte.sauron"
-                   ExtensionBundleVersion="1.2.1"
+                   ExtensionBundleVersion="1.2.2"
                    ExtensionBundleName="Sauron"
                    Version="9.0">
   <ExtensionList>
-    <Extension Id="com.splainte.sauron.panel" Version="1.2.1"/>
+    <Extension Id="com.splainte.sauron.panel" Version="1.2.2"/>
   </ExtensionList>
   <ExecutionEnvironment>
     <HostList>
